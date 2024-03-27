@@ -1,7 +1,8 @@
-from vectordb_bench.backend.dataset import Dataset, get_files
+from vectordb_bench.backend.dataset import Dataset
 import logging
 import pytest
 from pydantic import ValidationError
+from vectordb_bench.backend.data_source import DatasetSource
 
 
 log = logging.getLogger("vectordb_bench")
@@ -25,7 +26,7 @@ class TestDataSet:
 
     def test_iter_cohere(self):
         cohere_10m = Dataset.COHERE.manager(10_000_000)
-        cohere_10m.prepare(check=False)
+        cohere_10m.prepare()
 
         import time
         before = time.time()
@@ -35,34 +36,42 @@ class TestDataSet:
         dur_iter = time.time() - before
         log.warning(f"iter through cohere_10m cost={dur_iter/60}min")
 
+    # pytest -sv tests/test_dataset.py::TestDataSet::test_iter_laion
+    def test_iter_laion(self):
+        laion_100m = Dataset.LAION.manager(100_000_000)
+        from vectordb_bench.backend.data_source import DatasetSource
+        laion_100m.prepare(source=DatasetSource.AliyunOSS)
 
-class TestGetFiles:
-    @pytest.mark.parametrize("train_count", [
-        1,
-        10,
-        50,
-        100,
-    ])
-    @pytest.mark.parametrize("with_gt", [True, False])
-    def test_train_count(self, train_count, with_gt):
-        files = get_files(train_count, True, with_gt)
-        log.info(files)
+        import time
+        before = time.time()
+        for i in laion_100m:
+            log.debug(i.head(1))
 
-        if with_gt:
-            assert len(files) - 4 == train_count
-        else:
-            assert len(files) - 1 == train_count
+        dur_iter = time.time() - before
+        log.warning(f"iter through laion_100m cost={dur_iter/60}min")
 
-    @pytest.mark.parametrize("use_shuffled", [True, False])
-    def test_use_shuffled(self, use_shuffled):
-        files = get_files(1, use_shuffled, True)
-        log.info(files)
+    def test_download_small(self):
+        openai_50k = Dataset.OPENAI.manager(50_000)
+        files = [
+            "test.parquet",
+            "neighbors.parquet",
+            "neighbors_head_1p.parquet",
+            "neighbors_tail_1p.parquet",
+        ]
 
-        trains = [f for f in files if "train" in f]
-        if use_shuffled:
-            for t in trains:
-                assert "shuffle_train" in t
-        else:
-            for t in trains:
-                assert "shuffle" not in t
-                assert "train" in t
+        file_path = openai_50k.data_dir.joinpath("test.parquet")
+        import os
+
+        DatasetSource.S3.reader().read(
+            openai_50k.data.dir_name.lower(),
+            files=files,
+            local_ds_root=openai_50k.data_dir,
+        )
+
+        os.remove(file_path)
+        DatasetSource.AliyunOSS.reader().read(
+            openai_50k.data.dir_name.lower(),
+            files=files,
+            local_ds_root=openai_50k.data_dir,
+        )
+
